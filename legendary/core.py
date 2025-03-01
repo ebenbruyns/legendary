@@ -754,6 +754,7 @@ class LegendaryCore:
                 # params.game_parameters.extend(shlex.split(install.launch_parameters, posix=False))
                 # split on " -" to avoid splitting on spaces in arguments
                 params.game_parameters.extend(install.launch_parameters.split(' -'))
+                params.game_parameters = [i for i in params.game_parameters if i]
                 #add leading - if missing
                 for i, p in enumerate(params.game_parameters):
                     if not p.startswith('-'):
