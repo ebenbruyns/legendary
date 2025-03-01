@@ -751,7 +751,13 @@ class LegendaryCore:
 
         if install.launch_parameters:
             try:
-                params.game_parameters.extend(shlex.split(install.launch_parameters, posix=False))
+                # params.game_parameters.extend(shlex.split(install.launch_parameters, posix=False))
+                # split on " -" to avoid splitting on spaces in arguments
+                params.game_parameters.extend(install.launch_parameters.split(' -'))
+                #add leading - if missing
+                for i, p in enumerate(params.game_parameters):
+                    if not p.startswith('-'):
+                        params.game_parameters[i] = f'-{p}'
             except ValueError as e:
                 self.log.warning(f'Parsing predefined launch parameters failed with: {e!r}, '
                                  f'input: {install.launch_parameters}')
