@@ -1269,6 +1269,7 @@ class LegendaryCore:
             raise ValueError('Manifest response has more than one element!')
 
         manifest_hash = m_api_r['elements'][0]['hash']
+        manifest_use_signed_url: bool = m_api_r['elements'][0]['useSignedUrl']
         base_urls = []
         manifest_urls = []
         for manifest in m_api_r['elements'][0]['manifests']:
@@ -1282,10 +1283,10 @@ class LegendaryCore:
             else:
                 manifest_urls.append(manifest['uri'])
 
-        return manifest_urls, base_urls, manifest_hash
+        return manifest_urls, base_urls, manifest_hash, manifest_use_signed_url
 
     def get_cdn_manifest(self, game, platform='Windows', disable_https=False):
-        manifest_urls, base_urls, manifest_hash = self.get_cdn_urls(game, platform)
+        manifest_urls, base_urls, manifest_hash, use_signed_url = self.get_cdn_urls(game, platform)
         if not manifest_urls:
             raise ValueError('No manifest URLs returned by API')
 
@@ -1313,7 +1314,7 @@ class LegendaryCore:
         if sha1(manifest_bytes).hexdigest() != manifest_hash:
             raise ValueError('Manifest sha hash mismatch!')
 
-        return manifest_bytes, base_urls
+        return manifest_bytes, base_urls, use_signed_url
 
     def get_uri_manifest(self, uri):
         if uri.startswith('http'):
@@ -1348,7 +1349,8 @@ class LegendaryCore:
                          repair: bool = False, repair_use_latest: bool = False,
                          disable_delta: bool = False, override_delta_manifest: str = '',
                          egl_guid: str = '', preferred_cdn: str = None,
-                         disable_https: bool = False, bind_ip: str = None) -> (DLManager, AnalysisResult, ManifestMeta):
+                         disable_https: bool = False, bind_ip: str = None, always_use_signed_urls: bool = False
+                         ) -> tuple[DLManager, AnalysisResult, InstalledGame]:
         # load old manifest
         old_manifest = None
 
@@ -1376,11 +1378,13 @@ class LegendaryCore:
         if override_manifest:
             self.log.info(f'Overriding manifest with "{override_manifest}"')
             new_manifest_data, _base_urls = self.get_uri_manifest(override_manifest)
+            # FIXME: Populate `use_signed_urls`
+            use_signed_urls = False
             # if override manifest has a base URL use that instead
             if _base_urls:
                 base_urls = _base_urls
         else:
-            new_manifest_data, base_urls = self.get_cdn_manifest(game, platform, disable_https=disable_https)
+            new_manifest_data, base_urls, use_signed_urls = self.get_cdn_manifest(game, platform, disable_https=disable_https)
             # overwrite base urls in metadata with current ones to avoid using old/dead CDNs
             game.base_urls = base_urls
             # save base urls to game metadata
@@ -1464,7 +1468,7 @@ class LegendaryCore:
             if not repair_use_latest and old_manifest:
                 # use installed manifest for repairs instead of updating
                 new_manifest = old_manifest
-                old_manifest = None
+            old_manifest = None
 
             filename = clean_filename(f'{game.app_name}.repair')
             resume_file = os.path.join(self.lgd.get_tmp_path(), filename)
@@ -1516,7 +1520,12 @@ class LegendaryCore:
         if not max_workers:
             max_workers = self.lgd.config.getint('Legendary', 'max_workers', fallback=0)
 
-        dlm = DLManager(install_path, base_url, resume_file=resume_file, status_q=status_q,
+        if always_use_signed_urls:
+            use_signed_urls = True
+
+        asset = self.get_asset(game.app_name, platform)
+        dlm = DLManager(install_path, base_url, use_signed_urls, asset,
+                        resume_file=resume_file, status_q=status_q,
                         max_shared_memory=max_shm * 1024 * 1024, max_workers=max_workers,
                         dl_timeout=dl_timeout, bind_ip=bind_ip)
 
@@ -1535,7 +1544,8 @@ class LegendaryCore:
             if read_files:
                 raise
             self.log.warning('Memory error encountered, retrying with file read enabled...')
-            dlm = DLManager(install_path, base_url, resume_file=resume_file, status_q=status_q,
+            dlm = DLManager(install_path, base_url, use_signed_urls, asset,
+                        resume_file=resume_file, status_q=status_q,
                         max_shared_memory=max_shm * 1024 * 1024, max_workers=max_workers,
                         dl_timeout=dl_timeout, bind_ip=bind_ip)
             anlres = dlm.run_analysis(manifest=new_manifest, **analysis_kwargs, read_files=True)
@@ -1573,7 +1583,7 @@ class LegendaryCore:
                               can_run_offline=offline == 'true', requires_ot=ot == 'true',
                               is_dlc=base_game is not None, install_size=anlres.install_size,
                               egl_guid=egl_guid, install_tags=file_install_tag,
-                              platform=platform, uninstaller=uninstaller)
+                              platform=platform, uninstaller=uninstaller, use_signed_url=use_signed_urls)
 
         return dlm, anlres, igame
 
@@ -1788,9 +1798,11 @@ class LegendaryCore:
                 if not needs_verify:
                     self.log.debug(f'No in-progress installation found, assuming complete...')
 
+        # FIXME: Populate `use_signed_url`
+        use_signed_url = False
         if not manifest_data:
             self.log.info(f'Downloading latest manifest for "{game.app_name}"')
-            manifest_data, base_urls = self.get_cdn_manifest(game)
+            manifest_data, base_urls, use_signed_url = self.get_cdn_manifest(game)
             if not game.base_urls:
                 game.base_urls = base_urls
                 self.lgd.set_game_meta(game.app_name, game)
@@ -1816,7 +1828,7 @@ class LegendaryCore:
                               executable=new_manifest.meta.launch_exe, can_run_offline=offline == 'true',
                               launch_parameters=new_manifest.meta.launch_command, requires_ot=ot == 'true',
                               needs_verification=needs_verify, install_size=install_size, egl_guid=egl_guid,
-                              platform=platform)
+                              platform=platform, use_signed_url=use_signed_url)
 
         return new_manifest, igame
 
@@ -2067,7 +2079,7 @@ class LegendaryCore:
         if not self.logged_in:
             self.egs.start_session(client_credentials=True)
 
-        _manifest, base_urls = self.get_cdn_manifest(EOSOverlayApp)
+        _manifest, base_urls, use_signed_urls = self.get_cdn_manifest(EOSOverlayApp)
         manifest = self.load_manifest(_manifest)
 
         if igame := self.lgd.get_overlay_install_info():
@@ -2075,7 +2087,10 @@ class LegendaryCore:
         else:
             path = path or os.path.join(self.get_default_install_dir(), '.overlay')
 
-        dlm = DLManager(path, base_urls[0])
+        if use_signed_urls:
+            raise ValueError('EOS Overlay requiring signed URLs, not sure what to do here')
+
+        dlm = DLManager(path, base_urls[0], use_signed_urls, GameAsset())
         analysis_result = dlm.run_analysis(manifest=manifest)
 
         install_size = analysis_result.install_size
@@ -2124,7 +2139,7 @@ class LegendaryCore:
         if os.path.exists(path):
             raise FileExistsError(f'Bottle {bottle_name} already exists')
 
-        dlm = DLManager(path, base_url)
+        dlm = DLManager(path, base_url, False, GameAsset())
         analysis_result = dlm.run_analysis(manifest=manifest)
 
         install_size = analysis_result.install_size
