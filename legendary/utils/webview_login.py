@@ -10,8 +10,9 @@ webview_available = True
 
 try:
     import webview
+    from webview import errors as webview_errors
 
-    # silence logger
+    # silence logger - in v6.0 PYWEBVIEW_LOG env var takes precedence
     webview.logger.setLevel(logging.FATAL)
     gui = webview.initialize()
     if gui and os.name == 'nt' and gui.renderer not in ('edgechromium', 'cef'):
@@ -19,6 +20,7 @@ try:
 except Exception as e:
     logger.debug(f'Webview unavailable, disabling webview login (Exception: {e!r}).')
     webview_available = False
+    webview_errors = None
 
 login_url = 'https://www.epicgames.com/id/login'
 sid_url = 'https://www.epicgames.com/id/api/redirect?'
@@ -68,7 +70,14 @@ class MockLauncher:
 
         # Inject JS so required window.ue stuff is available
         if self.inject_js:
-            self.window.evaluate_js(window_js)
+            try:
+                self.window.evaluate_js(window_js)
+            except Exception as e:
+                # Handle both old-style exceptions and new JavascriptException
+                if webview_errors and isinstance(e, webview_errors.JavascriptException):
+                    logger.debug(f'JavaScript evaluation failed: {e}')
+                else:
+                    logger.debug(f'JavaScript evaluation failed: {e}')
 
         if 'logout' in url and self.callback_sid:
             # prepare to close browser after logout redirect
@@ -106,7 +115,14 @@ class MockLauncher:
         if not self.destroy_on_load:
             logger.debug('Injecting SID JS')
             # inject JS to get SID API response and call our API
-            self.window.evaluate_js(get_sid_js)
+            try:
+                self.window.evaluate_js(get_sid_js)
+            except Exception as e:
+                # Handle both old-style exceptions and new JavascriptException
+                if webview_errors and isinstance(e, webview_errors.JavascriptException):
+                    logger.error(f'SID JavaScript evaluation failed: {e}')
+                else:
+                    logger.error(f'SID JavaScript evaluation failed: {e}')
 
     def login_sid(self, sid_json):
         # Try SID login, then log out
@@ -140,6 +156,7 @@ def do_webview_login(callback_sid=None, callback_code=None, user_agent=None):
     window = webview.create_window(f'Legendary {__version__} - Epic Games Account Login',
                                    url=url, width=1280, height=800, js_api=api)
     api.window = window
+    # Use window.events.loaded for webview 6.0 compatibility
     window.events.loaded += api.on_loaded
 
     try:

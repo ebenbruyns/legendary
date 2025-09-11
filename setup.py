@@ -41,8 +41,8 @@ setup(
         'filelock'
     ],
     extras_require=dict(
-        webview=['pywebview>=3.4'],
-        webview_gtk=['pywebview>=3.4', 'PyGObject']
+        webview=['pywebview>=6.0'],
+        webview_gtk=['pywebview>=6.0', 'PyGObject']
     ),
     url='https://github.com/derrod/legendary',
     description='Free and open-source replacement for the Epic Games Launcher application',
