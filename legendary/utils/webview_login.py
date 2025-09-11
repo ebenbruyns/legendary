@@ -10,13 +10,25 @@ webview_available = True
 
 try:
     import webview
-    from webview import errors as webview_errors
+    try:
+        from webview import errors as webview_errors
+    except ImportError:
+        webview_errors = None
 
-    # silence logger - in v6.0 PYWEBVIEW_LOG env var takes precedence
+    # silence logger
     webview.logger.setLevel(logging.FATAL)
-    gui = webview.initialize()
-    if gui and os.name == 'nt' and gui.renderer not in ('edgechromium', 'cef'):
-        raise NotImplementedError(f'Renderer {gui.renderer} not supported on Windows.')
+    
+    # Initialize webview - in v6.0 this may return None but that's OK
+    try:
+        gui = webview.initialize()
+        if gui and os.name == 'nt' and hasattr(gui, 'renderer') and gui.renderer not in ('edgechromium', 'cef'):
+            raise NotImplementedError(f'Renderer {gui.renderer} not supported on Windows.')
+    except AttributeError:
+        # webview.initialize might not exist or return None in some versions
+        pass
+    
+    webview_available = True
+        
 except Exception as e:
     logger.debug(f'Webview unavailable, disabling webview login (Exception: {e!r}).')
     webview_available = False
